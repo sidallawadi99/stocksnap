@@ -1,0 +1,57 @@
+// This is your Prisma schema file.
+// It describes the tables (called "models") in our database.
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// The catalogue. One row per product the store stocks.
+model Product {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique
+  category      String?  // e.g. "Dairy", "Bakery"
+  unit          String   @default("packet") // the base unit we count stock in
+  unitsPerCrate Int      @default(1)         // how many base units make 1 crate (e.g. 30)
+  stock         Int      @default(0)         // current quantity in stock, in base units
+  aliases       String?  // comma-separated alternate names, helps the AI match messy handwriting
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  lines DeliveryLine[]
+}
+
+/// One delivery note received from a vendor (via upload or WhatsApp).
+model Delivery {
+  id         Int      @id @default(autoincrement())
+  vendorName String?
+  source     String   @default("upload") // "upload" or "whatsapp"
+  imagePath  String?  // where the photo is stored
+  status     String   @default("pending") // "pending" -> "confirmed"
+  createdAt  DateTime @default(now())
+
+  lines DeliveryLine[]
+}
+
+/// One line item the AI extracted from a delivery note.
+model DeliveryLine {
+  id         Int      @id @default(autoincrement())
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  deliveryId Int
+
+  rawText    String  // the full line as the AI read it, e.g. "Toned Milk 1 crate"
+  rawName    String  // just the item name the AI parsed, e.g. "Toned Milk"
+  quantity   Float   // the number the AI parsed, e.g. 1
+  rawUnit    String? // the unit the AI parsed, e.g. "crate" or "packet"
+
+  product     Product? @relation(fields: [productId], references: [id])
+  productId   Int?     // the catalogue product we matched it to (null if no match)
+  resolvedQty Int      @default(0)        // quantity converted into the product's base unit
+  confidence  Float?                      // how confident the AI was, 0 to 1
+  status      String   @default("matched") // "matched", "unmatched", or "confirmed"
+}
