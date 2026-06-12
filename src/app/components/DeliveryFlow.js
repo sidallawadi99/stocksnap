@@ -10,7 +10,8 @@ import { useEffect, useState } from "react";
 //   onDirtyChange(dirty) - true once a photo/extraction exists (blocks click-outside close)
 //   onConfirmed()        - called after stock is applied (parent can refresh data)
 //   onClose()            - called by "Done" (parent closes the modal / navigates)
-export default function DeliveryFlow({ onBusyChange, onDirtyChange, onConfirmed, onClose }) {
+export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onConfirmed, onClose }) {
+  const [initializing, setInitializing] = useState(Boolean(editId));
   const [vendorName, setVendorName] = useState("");
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -27,8 +28,42 @@ export default function DeliveryFlow({ onBusyChange, onDirtyChange, onConfirmed,
 
   // Tell the parent when a process is running (locks closing).
   useEffect(() => {
-    onBusyChange?.(loading || confirming);
-  }, [loading, confirming, onBusyChange]);
+    onBusyChange?.(loading || confirming || initializing);
+  }, [loading, confirming, initializing, onBusyChange]);
+
+  // Edit mode: load an existing delivery (reopening reverses it if confirmed).
+  useEffect(() => {
+    if (!editId) return;
+    (async () => {
+      setInitializing(true);
+      try {
+        const res = await fetch(`/api/deliveries/${editId}/reopen`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load this delivery.");
+        const d = data.delivery;
+        setDelivery(d);
+        setPreviewUrl(d.imagePath || null);
+        setVendorName(d.vendorName || "");
+        setRows(
+          d.lines.map((l) => ({
+            id: l.id,
+            rawText: l.rawText,
+            rawName: l.rawName,
+            quantity: l.quantity,
+            rawUnit: l.rawUnit,
+            confidence: l.confidence,
+            productId: l.productId ? String(l.productId) : "",
+            resolvedQty: l.resolvedQty,
+            include: Boolean(l.productId),
+          }))
+        );
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setInitializing(false);
+      }
+    })();
+  }, [editId]);
 
   // Tell the parent when there's unsaved work (blocks click-outside close).
   useEffect(() => {
@@ -166,13 +201,21 @@ export default function DeliveryFlow({ onBusyChange, onDirtyChange, onConfirmed,
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-xl font-semibold">New Delivery</h2>
+        <h2 className="text-xl font-semibold">{editId ? "Edit Delivery" : "New Delivery"}</h2>
         <p className="text-sm text-zinc-500">
-          {delivery ? "Check the note against the extracted items, then confirm." : "Upload the vendor's handwritten note — the AI will read it."}
+          {delivery
+            ? "Check the note against the extracted items, then confirm."
+            : editId
+            ? "Loading this delivery…"
+            : "Upload the vendor's handwritten note — the AI will read it."}
         </p>
       </div>
 
-      {!delivery ? (
+      {editId && !delivery ? (
+        <div className="py-10 text-center text-sm text-zinc-400">
+          {error ? <span className="text-red-600">{error}</span> : "⏳ Loading delivery…"}
+        </div>
+      ) : !delivery ? (
         /* ── STEP 1: upload (compact, single column) ── */
         <div className="flex max-w-2xl flex-col gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -220,7 +263,7 @@ export default function DeliveryFlow({ onBusyChange, onDirtyChange, onConfirmed,
               />
               <div className="mt-1 flex items-center justify-between text-xs text-zinc-400">
                 <span>🔍 Click to enlarge</span>
-                <button onClick={reset} className="underline hover:text-zinc-600">Use a different note</button>
+                {!editId && <button onClick={reset} className="underline hover:text-zinc-600">Use a different note</button>}
               </div>
             </div>
           </div>

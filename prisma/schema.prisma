@@ -36,12 +36,16 @@ model Product {
 /// One batch is created per confirmed delivery line. This lets us answer
 /// "how many units expire today?" and "how many were added today?".
 model Batch {
-  id         Int      @id @default(autoincrement())
-  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id         Int       @id @default(autoincrement())
+  product    Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   productId  Int
   quantity   Int
-  receivedAt DateTime @default(now())
+  receivedAt DateTime  @default(now())
   expiresAt  DateTime
+  // Which delivery created this batch (null for the initial seeded stock).
+  // Lets us reverse a delivery's stock when it's edited or deleted.
+  delivery   Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+  deliveryId Int?
 }
 
 /// One delivery note received from a vendor (via upload or WhatsApp).
@@ -54,7 +58,8 @@ model Delivery {
   createdAt   DateTime @default(now())
   confirmedAt DateTime? // set when the owner confirms and stock is applied
 
-  lines DeliveryLine[]
+  lines   DeliveryLine[]
+  batches Batch[]
 }
 
 /// One line item the AI extracted from a delivery note.

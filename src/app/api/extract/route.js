@@ -18,6 +18,15 @@ export async function POST(request) {
     if (!file || typeof file === "string") {
       return NextResponse.json({ error: "No image file was provided." }, { status: 400 });
     }
+    // Edge: reject non-image uploads (e.g. a PDF or text file).
+    if (!file.type || !file.type.startsWith("image/")) {
+      return NextResponse.json({ error: "Please upload an image (JPG or PNG)." }, { status: 400 });
+    }
+    // Edge: reject very large files to protect server memory.
+    const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+    if (file.size > MAX_BYTES) {
+      return NextResponse.json({ error: "Image is too large (max 10 MB)." }, { status: 400 });
+    }
 
     // Read the uploaded file into memory.
     const bytes = Buffer.from(await file.arrayBuffer());
@@ -25,8 +34,9 @@ export async function POST(request) {
     const mimeType = file.type || "image/jpeg";
 
     // Save a copy so we can show the original note on the review screen.
-    const ext = mimeType.split("/")[1] || "jpg";
-    const fileName = `delivery_${Date.now()}.${ext}`;
+    // Random suffix avoids collisions when two notes arrive in the same ms.
+    const ext = (mimeType.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "");
+    const fileName = `delivery_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
     await writeFile(path.join(process.cwd(), "public", "uploads", fileName), bytes);
     const imagePath = `/uploads/${fileName}`;
 

@@ -1,39 +1,6 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import { prisma } from "@/lib/prisma";
-
-const DAY = 24 * 60 * 60 * 1000;
-
-// Build a compact, live snapshot of inventory for the AI to reason over.
-async function buildInventoryContext() {
-  const products = await prisma.product.findMany({
-    orderBy: [{ supply: "asc" }, { category: "asc" }, { name: "asc" }],
-    include: { batches: true },
-  });
-
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start.getTime() + DAY);
-  const sum = (p, field) =>
-    p.batches.reduce((s, b) => {
-      const d = new Date(b[field]);
-      return d >= start && d < end ? s + b.quantity : s;
-    }, 0);
-
-  const lines = products.map((p) => {
-    const exp = sum(p, "expiresAt");
-    const added = sum(p, "receivedAt");
-    const tags = [
-      `stock ${p.stock} ${p.unit}`,
-      p.stock <= 6 ? "LOW" : null,
-      exp > 0 ? `expiring today ${exp}` : null,
-      added > 0 ? `added today ${added}` : null,
-    ].filter(Boolean);
-    return `- ${p.name} [${p.category}, ${p.supply}]: ${tags.join(", ")}`;
-  });
-
-  return lines.join("\n");
-}
+import { buildInventoryContext } from "@/lib/inventory";
 
 const SYSTEM = (date, inventory) => `You are "StockSnap Assistant", a friendly inventory helper for an Indian kirana (grocery) store owner.
 

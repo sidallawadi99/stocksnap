@@ -51,6 +51,7 @@ export async function POST(request, { params }) {
             await tx.batch.create({
               data: {
                 productId,
+                deliveryId,
                 quantity: qty,
                 receivedAt: new Date(),
                 expiresAt: new Date(Date.now() + product.shelfLifeDays * DAY),

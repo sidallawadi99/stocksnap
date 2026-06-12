@@ -52,8 +52,8 @@ export async function extractDeliveryItems(base64Image, mimeType) {
 }
 
 // The model is told to return JSON, but we defend against stray markdown
-// fences or extra characters just in case.
-function safeParseItems(text) {
+// fences or extra characters just in case. Exported for testing.
+export function safeParseItems(text) {
   let cleaned = text;
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
