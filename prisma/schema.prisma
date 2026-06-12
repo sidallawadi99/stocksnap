@@ -53,6 +53,7 @@ model Delivery {
   id         Int      @id @default(autoincrement())
   vendorName String?
   source     String   @default("upload") // "upload" or "whatsapp"
+  sourceRef  String?  // e.g. WhatsApp sender id, so a "CONFIRM" reply finds this delivery
   imagePath  String?  // where the photo is stored
   status      String   @default("pending") // "pending" -> "confirmed"
   createdAt   DateTime @default(now())

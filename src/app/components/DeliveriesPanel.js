@@ -71,7 +71,7 @@ export default function DeliveriesPanel({ deliveries }) {
                   <div>
                     <span className="font-medium">{d.vendorName || "Unnamed vendor"}</span>
                     <span className="ml-2 text-zinc-500">· {d.itemCount} item(s) · via {d.source}</span>
-                    <div className="text-xs text-zinc-400">{new Date(d.createdAt).toLocaleString()}</div>
+                    <div className="text-xs text-zinc-400" suppressHydrationWarning>{new Date(d.createdAt).toLocaleString()}</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={d.status} />
