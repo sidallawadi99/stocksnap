@@ -15,15 +15,33 @@ datasource db {
 model Product {
   id            Int      @id @default(autoincrement())
   name          String   @unique
-  category      String?  // e.g. "Dairy", "Bakery"
+  brand         String?  // e.g. "Amul", "Aashirvaad"
+  category      String?  // e.g. "Dairy", "Bakery", "Staples"
   unit          String   @default("packet") // the base unit we count stock in
   unitsPerCrate Int      @default(1)         // how many base units make 1 crate (e.g. 30)
   stock         Int      @default(0)         // current quantity in stock, in base units
   aliases       String?  // comma-separated alternate names, helps the AI match messy handwriting
+  // "local_vendor" = arrives daily on handwritten slips (our app updates these).
+  // "distributor"  = bought via formal invoices/POs (shown for completeness).
+  supply        String   @default("distributor")
+  shelfLifeDays Int?     // how many days the item stays fresh (null = non-perishable)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  lines DeliveryLine[]
+  lines   DeliveryLine[]
+  batches Batch[]
+}
+
+/// A single received lot of a perishable product, with its own expiry.
+/// One batch is created per confirmed delivery line. This lets us answer
+/// "how many units expire today?" and "how many were added today?".
+model Batch {
+  id         Int      @id @default(autoincrement())
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId  Int
+  quantity   Int
+  receivedAt DateTime @default(now())
+  expiresAt  DateTime
 }
 
 /// One delivery note received from a vendor (via upload or WhatsApp).
@@ -32,8 +50,9 @@ model Delivery {
   vendorName String?
   source     String   @default("upload") // "upload" or "whatsapp"
   imagePath  String?  // where the photo is stored
-  status     String   @default("pending") // "pending" -> "confirmed"
-  createdAt  DateTime @default(now())
+  status      String   @default("pending") // "pending" -> "confirmed"
+  createdAt   DateTime @default(now())
+  confirmedAt DateTime? // set when the owner confirms and stock is applied
 
   lines DeliveryLine[]
 }

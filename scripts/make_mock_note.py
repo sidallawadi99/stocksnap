@@ -26,8 +26,9 @@ items = [
     ("Full Cream Milk", "1 crate"),
     ("Cow Milk", "20 pkt"),
     ("Curd", "15"),
-    ("Butter", "12 pkt"),
     ("Paneer", "6 packet"),
+    ("White Bread", "8"),
+    ("Eggs", "3 tray"),
 ]
 
 y = 210
@@ -37,7 +38,7 @@ for name, qty in items:
     draw.text((640, y + jitter), "- " + qty, font=mid, fill=ink)
     y += 130
 
-draw.text((60, y + 30), "Total 6 items", font=small, fill=(90, 90, 110))
+draw.text((60, y + 30), f"Total {len(items)} items", font=small, fill=(90, 90, 110))
 draw.text((600, y + 90), "~ Ramesh", font=mid, fill=(120, 60, 60))
 
 out = "public/uploads/mock_note.png"

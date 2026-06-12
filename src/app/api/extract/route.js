@@ -34,7 +34,9 @@ export async function POST(request) {
     const items = await extractDeliveryItems(base64, mimeType);
 
     // 2) Match each read line to a catalogue product.
-    const products = await prisma.product.findMany();
+    //    Handwritten slips only come from local daily vendors, so we match
+    //    against just that subset — more accurate, and true to the domain.
+    const products = await prisma.product.findMany({ where: { supply: "local_vendor" } });
     const lines = items.map((item) => {
       const { product, score } = findBestProduct(item.name, products);
       const resolvedQty = resolveQuantity(item.quantity, item.unit, product);

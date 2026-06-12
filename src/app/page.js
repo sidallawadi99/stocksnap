@@ -1,73 +1,83 @@
-import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import ChatPanel from "@/app/components/ChatPanel";
 
 // Always fetch fresh data so stock changes show up immediately after a delivery.
 export const dynamic = "force-dynamic";
 
 const LOW_STOCK_THRESHOLD = 6;
+const DAY = 24 * 60 * 60 * 1000;
 
 export default async function Dashboard() {
-  const products = await prisma.product.findMany({ orderBy: [{ category: "asc" }, { name: "asc" }] });
+  const products = await prisma.product.findMany({
+    orderBy: [{ category: "asc" }, { name: "asc" }],
+    include: { batches: true },
+  });
   const deliveries = await prisma.delivery.findMany({
     orderBy: { createdAt: "desc" },
     take: 5,
     include: { lines: true },
   });
 
+  // Today's window, in server local time.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const endOfToday = new Date(startOfToday.getTime() + DAY);
+
+  const sumBatches = (p, field) =>
+    p.batches.reduce((sum, b) => {
+      const d = new Date(b[field]);
+      return d >= startOfToday && d < endOfToday ? sum + b.quantity : sum;
+    }, 0);
+
+  // Enrich each product with today's expiring + added counts.
+  for (const p of products) {
+    p._expiringToday = sumBatches(p, "expiresAt");
+    p._addedToday = sumBatches(p, "receivedAt");
+  }
+
+  const localVendor = products.filter((p) => p.supply === "local_vendor");
+  const distributor = products.filter((p) => p.supply !== "local_vendor");
   const totalUnits = products.reduce((sum, p) => sum + p.stock, 0);
   const lowStock = products.filter((p) => p.stock <= LOW_STOCK_THRESHOLD);
+  const expiringToday = products.reduce((sum, p) => sum + p._expiringToday, 0);
+
+  const todayLabel = new Date().toLocaleDateString("en-IN", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  });
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Inventory Dashboard</h1>
-          <p className="text-sm text-zinc-500">Live stock, updated from vendor delivery notes.</p>
-        </div>
-        <Link href="/upload" className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
-          + New Delivery
-        </Link>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Inventory Dashboard</h1>
+        <div className="text-sm font-medium text-zinc-700">📅 {todayLabel}</div>
       </div>
 
+      <div className="flex flex-col gap-6 lg:flex-row">
+      <div className="flex min-w-0 flex-1 flex-col gap-8">
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatCard label="Products" value={products.length} />
-        <StatCard label="Total units in stock" value={totalUnits} />
+        <StatCard label="Total SKUs" value={products.length} />
+        <StatCard label="Expiring today" value={expiringToday} highlight={expiringToday > 0} />
         <StatCard label="Low stock items" value={lowStock.length} highlight={lowStock.length > 0} />
-        <StatCard label="Deliveries logged" value={deliveries.length} />
+        <StatCard label="Total units in stock" value={totalUnits} />
       </div>
 
-      {/* Inventory table */}
+      {/* Local-vendor items: the focus of this app */}
+      <section className="rounded-xl border border-emerald-200 bg-white">
+        <div className="flex items-center gap-2 border-b border-emerald-100 bg-emerald-50/60 px-5 py-3">
+          <span className="text-sm font-semibold">🛵 Daily-Vendor Items</span>
+          <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">updated from delivery slips</span>
+        </div>
+        <ProductTable products={localVendor} showCrate showExpiry />
+      </section>
+
+      {/* Formal/distributor inventory */}
       <section className="rounded-xl border border-zinc-200 bg-white">
-        <div className="border-b border-zinc-100 px-5 py-3 text-sm font-semibold">Catalogue & Stock</div>
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
-            <tr>
-              <th className="px-5 py-3">Product</th>
-              <th className="px-5 py-3">Category</th>
-              <th className="px-5 py-3 text-right">In stock</th>
-              <th className="px-5 py-3">Unit</th>
-              <th className="px-5 py-3">1 crate =</th>
-            </tr>
-          </thead>
-          <tbody>
-            {products.map((p) => {
-              const low = p.stock <= LOW_STOCK_THRESHOLD;
-              return (
-                <tr key={p.id} className="border-t border-zinc-100">
-                  <td className="px-5 py-3 font-medium">{p.name}</td>
-                  <td className="px-5 py-3 text-zinc-500">{p.category}</td>
-                  <td className="px-5 py-3 text-right">
-                    <span className={low ? "font-semibold text-red-600" : "font-semibold"}>{p.stock}</span>
-                    {low && <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-600">low</span>}
-                  </td>
-                  <td className="px-5 py-3 text-zinc-500">{p.unit}</td>
-                  <td className="px-5 py-3 text-zinc-500">{p.unitsPerCrate > 1 ? `${p.unitsPerCrate} ${p.unit}s` : "—"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="flex items-center gap-2 border-b border-zinc-100 px-5 py-3">
+          <span className="text-sm font-semibold">🏭 Formal Inventory</span>
+          <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">bought via invoices / POs</span>
+        </div>
+        <ProductTable products={distributor} />
       </section>
 
       {/* Recent deliveries */}
@@ -94,6 +104,68 @@ export default async function Dashboard() {
           </ul>
         )}
       </section>
+      </div>
+
+      <aside className="lg:shrink-0">
+        <div className="lg:sticky lg:top-6">
+          <ChatPanel />
+        </div>
+      </aside>
+      </div>
+    </div>
+  );
+}
+
+function ProductTable({ products, showCrate, showExpiry }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
+          <tr>
+            <th className="px-5 py-3">Product</th>
+            <th className="px-5 py-3">Brand</th>
+            <th className="px-5 py-3">Category</th>
+            <th className="px-5 py-3 text-right">In stock</th>
+            <th className="px-5 py-3">Unit</th>
+            {showCrate && <th className="px-5 py-3">1 crate =</th>}
+            {showExpiry && <th className="px-5 py-3 text-right">Expiring today</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {products.map((p) => {
+            const low = p.stock <= LOW_STOCK_THRESHOLD;
+            return (
+              <tr key={p.id} className="border-t border-zinc-100">
+                <td className="px-5 py-3 font-medium">{p.name}</td>
+                <td className="px-5 py-3 text-zinc-500">{p.brand || "—"}</td>
+                <td className="px-5 py-3 text-zinc-500">{p.category}</td>
+                <td className="px-5 py-3 text-right whitespace-nowrap">
+                  <span className={low ? "font-semibold text-red-600" : "font-semibold"}>{p.stock}</span>
+                  {p._addedToday > 0 && (
+                    <span className="ml-1 text-xs font-medium text-emerald-600">(+{p._addedToday})</span>
+                  )}
+                  {low && <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-600">low</span>}
+                </td>
+                <td className="px-5 py-3 text-zinc-500">{p.unit}</td>
+                {showCrate && (
+                  <td className="px-5 py-3 text-zinc-500">{p.unitsPerCrate > 1 ? `${p.unitsPerCrate} ${p.unit}s` : "—"}</td>
+                )}
+                {showExpiry && (
+                  <td className="px-5 py-3 text-right">
+                    {p._expiringToday > 0 ? (
+                      <span className="rounded bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                        {p._expiringToday} {p.unit}{p._expiringToday > 1 ? "s" : ""}
+                      </span>
+                    ) : (
+                      <span className="text-zinc-300">—</span>
+                    )}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -40,16 +40,29 @@ export async function POST(request, { params }) {
 
         // Only add to stock if the user kept the line AND it has a product.
         if (include && productId && qty > 0) {
-          await tx.product.update({
+          const product = await tx.product.update({
             where: { id: productId },
             data: { stock: { increment: qty } },
           });
+
+          // Record a batch with its own expiry, for "expiring today" tracking.
+          if (product.shelfLifeDays) {
+            const DAY = 24 * 60 * 60 * 1000;
+            await tx.batch.create({
+              data: {
+                productId,
+                quantity: qty,
+                receivedAt: new Date(),
+                expiresAt: new Date(Date.now() + product.shelfLifeDays * DAY),
+              },
+            });
+          }
         }
       }
 
       await tx.delivery.update({
         where: { id: deliveryId },
-        data: { status: "confirmed" },
+        data: { status: "confirmed", confirmedAt: new Date() },
       });
     });
 
