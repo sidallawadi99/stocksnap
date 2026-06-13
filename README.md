@@ -10,11 +10,11 @@ The owner snaps a photo of that slip (e.g. forwards it on WhatsApp). StockSnap u
 
 ## ✨ What it does
 
-- 📸 **Ingest a delivery note** by photo upload (designed so a WhatsApp webhook can feed the same pipeline).
-- 🤖 **Read handwriting with AI** (Google Gemini vision) into structured `{ item, quantity, unit }` data — handles English/Hindi and shorthand like `pkt`, `peti`, `crate`.
+- 📸 **Ingest delivery notes** by photo — upload **one or more** on the web, or **send one on WhatsApp** and reply `CONFIRM` right in the chat.
+- 🤖 **Read handwriting with AI** (Google Gemini vision) into structured `{ item, quantity, unit }` data — handles English/Hindi and shorthand like `pkt`, `peti`, `crate`. Photos are auto-rotated + downscaled first (sharp).
 - 🗂️ **Match to the catalogue** with an alias-aware fuzzy matcher, and **convert units** (e.g. 2 crates → 60 packets).
-- ✅ **Human-in-the-loop review** — the owner fixes any wrong match or quantity before anything is committed.
-- 📊 **Live inventory dashboard** with stock levels and low-stock alerts.
+- ✅ **Human-in-the-loop review** — the owner fixes any wrong match or quantity before anything is committed; confirmed deliveries are **reversible** (edit/delete undoes stock).
+- 📊 **Live dashboard** — stock, low-stock & expiry signals, an editable delivery log, and an **AI assistant** (chat + insights, with voice).
 
 ---
 
@@ -70,12 +70,14 @@ The owner snaps a photo of that slip (e.g. forwards it on WhatsApp). StockSnap u
 npm install
 ```
 
-### 2. Add your API key
-Create a file named `.env.local` in the project root:
+### 2. Set up environment variables
+Copy the template, then fill in your key:
 ```bash
-GEMINI_API_KEY=your_key_here
+cp .env.example .env.local
+cp .env.example .env        # Prisma reads .env
 ```
-The database URL is already set in `.env` (`DATABASE_URL="file:./dev.db"`).
+Add your free Gemini key to both files (`GEMINI_API_KEY=...`). Twilio keys are only
+needed for the optional WhatsApp feature. Your `.env*` files are git-ignored.
 
 ### 3. Set up the database (creates tables + sample catalogue)
 ```bash
@@ -117,9 +119,11 @@ prisma/
 
 ## 🛣️ Roadmap
 
-- **Real WhatsApp intake** via Twilio (a webhook that drops the image into the existing `/api/extract` pipeline).
-- Vendor-specific catalogues and price capture.
-- Confidence-based auto-confirm for high-trust lines.
+- **Production WhatsApp** via the Meta WhatsApp Cloud API (interactive Confirm/Cancel buttons) instead of the Twilio sandbox + dev tunnel.
+- Postgres + object storage (S3) for uploaded photos; deploy off localhost.
+- Vendor-specific catalogues, learned aliases, and confidence-based auto-confirm for high-trust lines.
+
+> See [HLD.md](./HLD.md) for the full design, decisions, trade-offs, and scaling plan.
 
 ---
 

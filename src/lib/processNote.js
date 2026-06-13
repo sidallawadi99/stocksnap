@@ -1,26 +1,33 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 import { prisma } from "./prisma";
 import { extractDeliveryItems } from "./gemini";
 import { findBestProduct, resolveQuantity } from "./match";
 
-// Shared pipeline: takes a delivery-note image, has the AI read it, matches each
-// line to the local-vendor catalogue, and saves a PENDING delivery.
-// Used by both the web upload (/api/extract) and WhatsApp (/api/whatsapp).
-export async function processDeliveryImage({ bytes, mimeType, source = "upload", vendorName = null, sourceRef = null }) {
-  const base64 = bytes.toString("base64");
+// Normalize one photo (auto-rotate via EXIF, downscale, re-encode to JPEG),
+// save it, have the AI read it, and match each line to a product.
+// Returns { lines, imagePath }.
+async function extractLinesFromImage(bytes, mimeType, products) {
+  let imageBytes = bytes;
+  let outMime = mimeType;
+  try {
+    imageBytes = await sharp(bytes)
+      .rotate()
+      .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+    outMime = "image/jpeg";
+  } catch {
+    // Not a format sharp can read — fall back to the original bytes.
+  }
 
-  // Save a copy so the review screen can show the original note.
-  const ext = (mimeType.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "");
+  const ext = (outMime.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "");
   const fileName = `delivery_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  await writeFile(path.join(process.cwd(), "public", "uploads", fileName), bytes);
+  await writeFile(path.join(process.cwd(), "public", "uploads", fileName), imageBytes);
   const imagePath = `/uploads/${fileName}`;
 
-  // AI reads the note.
-  const items = await extractDeliveryItems(base64, mimeType);
-
-  // Match each line to a local-vendor product (slips never contain rice/soap).
-  const products = await prisma.product.findMany({ where: { supply: "local_vendor" } });
+  const items = await extractDeliveryItems(imageBytes.toString("base64"), outMime);
   const lines = items.map((item) => {
     const { product, score } = findBestProduct(item.name, products);
     const resolvedQty = resolveQuantity(item.quantity, item.unit, product);
@@ -36,8 +43,30 @@ export async function processDeliveryImage({ bytes, mimeType, source = "upload",
     };
   });
 
+  return { lines, imagePath };
+}
+
+// Process ONE OR MORE delivery-note photos into a single PENDING delivery.
+// `images` is an array of { bytes, mimeType }.
+export async function processDeliveryImages({ images, source = "upload", vendorName = null, sourceRef = null }) {
+  // Match against local-vendor products (slips never contain rice/soap).
+  const products = await prisma.product.findMany({ where: { supply: "local_vendor" } });
+
+  let allLines = [];
+  let firstImagePath = null;
+  for (const img of images) {
+    const { lines, imagePath } = await extractLinesFromImage(img.bytes, img.mimeType, products);
+    if (!firstImagePath) firstImagePath = imagePath;
+    allLines = allLines.concat(lines);
+  }
+
   return prisma.delivery.create({
-    data: { vendorName, source, sourceRef, imagePath, status: "pending", lines: { create: lines } },
+    data: { vendorName, source, sourceRef, imagePath: firstImagePath, status: "pending", lines: { create: allLines } },
     include: { lines: { include: { product: true } } },
   });
+}
+
+// Single-image convenience (used by WhatsApp).
+export function processDeliveryImage({ bytes, mimeType, source = "upload", vendorName = null, sourceRef = null }) {
+  return processDeliveryImages({ images: [{ bytes, mimeType }], source, vendorName, sourceRef });
 }

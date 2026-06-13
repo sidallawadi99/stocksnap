@@ -1,35 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-// The full "new delivery" flow: pick photo -> AI reads it -> review/correct -> confirm.
+const MAX_MB = 10;
+const MAX_PHOTOS = 8;
+
+// The full "new delivery" flow: pick photo(s) -> AI reads -> review/correct -> confirm.
 // Reused inside the dashboard modal and on the /upload page.
-//
-// Props:
-//   onBusyChange(busy)   - true while the AI is reading/confirming (locks the modal)
-//   onDirtyChange(dirty) - true once a photo/extraction exists (blocks click-outside close)
-//   onConfirmed()        - called after stock is applied (parent can refresh data)
-//   onClose()            - called by "Done" (parent closes the modal / navigates)
 export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onConfirmed, onClose }) {
   const [initializing, setInitializing] = useState(Boolean(editId));
   const [vendorName, setVendorName] = useState("");
-  const [file, setFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(null);
+  const [photos, setPhotos] = useState([]); // [{ file, url }] in upload mode
+  const [editImage, setEditImage] = useState(null); // single saved image in edit mode
   const [products, setProducts] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
-  const [zoomed, setZoomed] = useState(false);
+  const [zoomUrl, setZoomUrl] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const [delivery, setDelivery] = useState(null);
   const [rows, setRows] = useState([]);
+  const fileInputRef = useRef(null);
 
-  // Tell the parent when a process is running (locks closing).
+  const galleryUrls = photos.length ? photos.map((p) => p.url) : editImage ? [editImage] : [];
+
   useEffect(() => {
     onBusyChange?.(loading || confirming || initializing);
   }, [loading, confirming, initializing, onBusyChange]);
+
+  useEffect(() => {
+    onDirtyChange?.(Boolean((photos.length || delivery) && !done));
+  }, [photos, delivery, done, onDirtyChange]);
+
+  useEffect(() => {
+    fetch("/api/products")
+      .then((r) => r.json())
+      .then((d) => setProducts(d.products || []))
+      .catch(() => {});
+  }, []);
 
   // Edit mode: load an existing delivery (reopening reverses it if confirmed).
   useEffect(() => {
@@ -42,21 +53,9 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
         if (!res.ok) throw new Error(data.error || "Failed to load this delivery.");
         const d = data.delivery;
         setDelivery(d);
-        setPreviewUrl(d.imagePath || null);
+        setEditImage(d.imagePath || null);
         setVendorName(d.vendorName || "");
-        setRows(
-          d.lines.map((l) => ({
-            id: l.id,
-            rawText: l.rawText,
-            rawName: l.rawName,
-            quantity: l.quantity,
-            rawUnit: l.rawUnit,
-            confidence: l.confidence,
-            productId: l.productId ? String(l.productId) : "",
-            resolvedQty: l.resolvedQty,
-            include: Boolean(l.productId),
-          }))
-        );
+        setRows(d.lines.map(toRow));
       } catch (err) {
         setError(err.message);
       } finally {
@@ -65,27 +64,40 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
     })();
   }, [editId]);
 
-  // Tell the parent when there's unsaved work (blocks click-outside close).
-  useEffect(() => {
-    onDirtyChange?.(Boolean((file || delivery) && !done));
-  }, [file, delivery, done, onDirtyChange]);
+  function toRow(l) {
+    return {
+      id: l.id, rawText: l.rawText, rawName: l.rawName, quantity: l.quantity, rawUnit: l.rawUnit,
+      confidence: l.confidence, productId: l.productId ? String(l.productId) : "",
+      resolvedQty: l.resolvedQty, include: Boolean(l.productId),
+    };
+  }
 
-  useEffect(() => {
-    fetch("/api/products")
-      .then((r) => r.json())
-      .then((d) => setProducts(d.products || []))
-      .catch(() => {});
-  }, []);
+  function selectFiles(fileList) {
+    const incoming = Array.from(fileList || []);
+    if (incoming.length === 0) return;
+    const valid = [];
+    let err = "";
+    for (const f of incoming) {
+      if (!f.type.startsWith("image/")) { err = "Only image files (JPG or PNG) are allowed."; continue; }
+      if (f.size > MAX_MB * 1024 * 1024) { err = `"${f.name}" is over ${MAX_MB} MB and was skipped.`; continue; }
+      valid.push({ file: f, url: URL.createObjectURL(f) });
+    }
+    setError(err);
+    if (valid.length) {
+      setPhotos((prev) => [...prev, ...valid].slice(0, MAX_PHOTOS));
+      setDelivery(null);
+      setRows([]);
+      setDone(false);
+    }
+  }
 
-  function onPickFile(e) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setFile(f);
-    setPreviewUrl(URL.createObjectURL(f));
-    setDelivery(null);
-    setRows([]);
-    setDone(false);
-    setError("");
+  function removePhoto(i) {
+    setPhotos((prev) => {
+      const next = [...prev];
+      const [removed] = next.splice(i, 1);
+      if (removed) URL.revokeObjectURL(removed.url);
+      return next;
+    });
   }
 
   function resolveQty(quantity, unit, product) {
@@ -98,15 +110,15 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
   }
 
   async function handleExtract() {
-    if (!file) {
-      setError("Please choose a photo of the delivery note first.");
+    if (photos.length === 0) {
+      setError("Please add at least one photo of the delivery note.");
       return;
     }
     setLoading(true);
     setError("");
     try {
       const fd = new FormData();
-      fd.append("image", file);
+      photos.forEach((p) => fd.append("image", p.file));
       fd.append("vendorName", vendorName);
       fd.append("source", "upload");
 
@@ -115,21 +127,9 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
       if (!res.ok) throw new Error(data.error || "Failed to read the note.");
 
       setDelivery(data.delivery);
-      setRows(
-        data.delivery.lines.map((l) => ({
-          id: l.id,
-          rawText: l.rawText,
-          rawName: l.rawName,
-          quantity: l.quantity,
-          rawUnit: l.rawUnit,
-          confidence: l.confidence,
-          productId: l.productId ? String(l.productId) : "",
-          resolvedQty: l.resolvedQty,
-          include: Boolean(l.productId),
-        }))
-      );
+      setRows(data.delivery.lines.map(toRow));
       if (data.delivery.lines.length === 0) {
-        setError("The AI couldn't read any items. Try a clearer photo.");
+        setError("The AI couldn't read any items. Try clearer photos.");
       }
     } catch (err) {
       setError(err.message);
@@ -174,7 +174,8 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
   }
 
   function reset() {
-    setFile(null); setPreviewUrl(null); setDelivery(null); setRows([]); setDone(false); setVendorName(""); setError("");
+    photos.forEach((p) => URL.revokeObjectURL(p.url));
+    setPhotos([]); setEditImage(null); setDelivery(null); setRows([]); setDone(false); setVendorName(""); setError("");
   }
 
   if (done) {
@@ -187,12 +188,8 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
           Added stock for {applied.length} item(s){vendorName ? ` from ${vendorName}` : ""}.
         </p>
         <div className="mt-5 flex justify-center gap-3">
-          <button onClick={() => onClose?.()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
-            Done
-          </button>
-          <button onClick={reset} className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium hover:bg-zinc-50">
-            Log another
-          </button>
+          <button onClick={() => onClose?.()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">Done</button>
+          <button onClick={reset} className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium hover:bg-zinc-50">Log another</button>
         </div>
       </div>
     );
@@ -204,10 +201,10 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
         <h2 className="text-xl font-semibold">{editId ? "Edit Delivery" : "New Delivery"}</h2>
         <p className="text-sm text-zinc-500">
           {delivery
-            ? "Check the note against the extracted items, then confirm."
+            ? "Check the notes against the extracted items, then confirm."
             : editId
             ? "Loading this delivery…"
-            : "Upload the vendor's handwritten note — the AI will read it."}
+            : "Upload one or more photos of the handwritten note(s) — the AI will read them."}
         </p>
       </div>
 
@@ -216,59 +213,85 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
           {error ? <span className="text-red-600">{error}</span> : "⏳ Loading delivery…"}
         </div>
       ) : !delivery ? (
-        /* ── STEP 1: upload (compact, single column) ── */
+        /* ── STEP 1: upload (multiple photos) ── */
         <div className="flex max-w-2xl flex-col gap-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">Vendor name (optional)</span>
-              <input
-                value={vendorName}
-                onChange={(e) => setVendorName(e.target.value)}
-                placeholder="e.g. Ramesh Dairy"
-                className="rounded-md border border-zinc-300 px-3 py-2"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">Delivery note photo</span>
-              <input type="file" accept="image/*" onChange={onPickFile} className="rounded-md border border-zinc-300 px-3 py-2" />
-            </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Vendor name (optional)</span>
+            <input
+              value={vendorName}
+              onChange={(e) => setVendorName(e.target.value)}
+              placeholder="e.g. Ramesh Dairy"
+              className="rounded-md border border-zinc-300 px-3 py-2 sm:max-w-xs"
+            />
+          </label>
+
+          <div>
+            <span className="text-sm font-medium">Delivery note photo(s)</span>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => { e.preventDefault(); setDragOver(false); selectFiles(e.dataTransfer.files); }}
+              className={`mt-1 rounded-xl border-2 border-dashed p-3 transition-colors ${dragOver ? "border-emerald-400 bg-emerald-50" : "border-zinc-300 bg-zinc-50/50"}`}
+            >
+              <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={(e) => selectFiles(e.target.files)} className="hidden" />
+              {photos.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex w-full flex-col items-center gap-1 rounded-lg py-10 text-center hover:bg-zinc-50"
+                >
+                  <span className="text-3xl">📷</span>
+                  <span className="text-sm font-medium text-zinc-700">Click to upload or drag photos here</span>
+                  <span className="text-xs text-zinc-400">JPG or PNG · up to {MAX_MB} MB each · multiple allowed</span>
+                </button>
+              ) : (
+                <div>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {photos.map((p, i) => (
+                      <div key={i} className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={p.url} alt={`photo ${i + 1}`} onClick={() => setZoomUrl(p.url)} className="h-24 w-full cursor-zoom-in rounded-lg border border-zinc-200 bg-white object-cover" />
+                        <button onClick={() => removePhoto(i)} title="Remove" className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-xs text-white hover:bg-black">×</button>
+                      </div>
+                    ))}
+                    {photos.length < MAX_PHOTOS && (
+                      <button onClick={() => fileInputRef.current?.click()} className="flex h-24 flex-col items-center justify-center rounded-lg border-2 border-dashed border-zinc-300 text-xs text-zinc-400 hover:bg-zinc-50">
+                        <span className="text-lg">+</span> Add more
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-2 text-xs text-zinc-400">{photos.length} photo(s) selected</div>
+                </div>
+              )}
+            </div>
           </div>
 
-          {previewUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={previewUrl} alt="delivery note preview" className="max-h-56 w-auto cursor-zoom-in rounded-lg border border-zinc-200" onClick={() => setZoomed(true)} />
-          )}
+          {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
           <button
             onClick={handleExtract}
-            disabled={loading || !file}
+            disabled={loading || photos.length === 0}
             className="w-fit rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
           >
-            {loading ? "🤖 Reading note…" : "Read note with AI"}
+            {loading ? `🤖 Reading ${photos.length > 1 ? photos.length + " notes" : "note"}…` : "Read note with AI"}
           </button>
-          {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
         </div>
       ) : (
-        /* ── STEP 2: review (note on the left, values on the right) ── */
+        /* ── STEP 2: review (notes on the left, values on the right) ── */
         <div className="flex flex-col gap-6 lg:flex-row">
-          {/* Left: the note image */}
           <div className="lg:w-72 lg:shrink-0">
-            <div className="lg:sticky lg:top-0">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewUrl}
-                alt="delivery note"
-                className="w-full cursor-zoom-in rounded-lg border border-zinc-200"
-                onClick={() => setZoomed(true)}
-              />
-              <div className="mt-1 flex items-center justify-between text-xs text-zinc-400">
+            <div className="space-y-2 lg:sticky lg:top-0">
+              {galleryUrls.map((url, i) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={i} src={url} alt={`note ${i + 1}`} onClick={() => setZoomUrl(url)} className="max-h-[40vh] w-full cursor-zoom-in rounded-lg border border-zinc-200 bg-zinc-50 object-contain" />
+              ))}
+              <div className="flex items-center justify-between text-xs text-zinc-400">
                 <span>🔍 Click to enlarge</span>
-                {!editId && <button onClick={reset} className="underline hover:text-zinc-600">Use a different note</button>}
+                {!editId && <button onClick={reset} className="underline hover:text-zinc-600">Start over</button>}
               </div>
             </div>
           </div>
 
-          {/* Right: extracted values */}
           <div className="min-w-0 flex-1">
             <h3 className="text-lg font-semibold">Review what the AI read</h3>
             <p className="mb-3 text-sm text-zinc-500">Fix any wrong match or quantity, untick to skip, then confirm.</p>
@@ -322,9 +345,7 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
                           className="w-16 rounded-md border border-zinc-300 px-2 py-1.5 text-right"
                         />
                       </td>
-                      <td className="py-3 pr-2">
-                        <ConfidencePill value={row.confidence} />
-                      </td>
+                      <td className="py-3 pr-2"><ConfidencePill value={row.confidence} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -344,14 +365,10 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
         </div>
       )}
 
-      {/* Image lightbox */}
-      {zoomed && previewUrl && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-6"
-          onClick={() => setZoomed(false)}
-        >
+      {zoomUrl && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-6" onClick={() => setZoomUrl(null)}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={previewUrl} alt="delivery note enlarged" className="max-h-[90vh] max-w-[90vw] cursor-zoom-out rounded-lg object-contain" />
+          <img src={zoomUrl} alt="note enlarged" className="max-h-[90vh] max-w-[90vw] cursor-zoom-out rounded-lg object-contain" />
         </div>
       )}
     </div>
