@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { buildInventoryContext } from "@/lib/inventory";
+import { getSession } from "@/lib/auth";
 
 const SYSTEM = (date, inventory) => `You are "StockSnap Assistant", a friendly inventory helper for an Indian kirana (grocery) store owner.
 
@@ -20,6 +21,10 @@ ${inventory}`;
 
 export async function POST(request) {
   try {
+    const session = await getSession();
+    if (!session || session.role !== "owner") {
+      return NextResponse.json({ error: "Please sign in." }, { status: 401 });
+    }
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: "GEMINI_API_KEY is missing." }, { status: 500 });
@@ -39,7 +44,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "No question provided." }, { status: 400 });
     }
 
-    const inventory = await buildInventoryContext();
+    const inventory = await buildInventoryContext(session.storeId);
     const todayLabel = new Date().toLocaleDateString("en-IN", {
       weekday: "long", day: "numeric", month: "long", year: "numeric",
     });

@@ -1,16 +1,21 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { buildInventoryContext } from "@/lib/inventory";
+import { getSession } from "@/lib/auth";
 
 // GET /api/insights -> a few short, actionable insights generated from live inventory.
 export async function GET() {
   try {
+    const session = await getSession();
+    if (!session || session.role !== "owner") {
+      return NextResponse.json({ error: "Please sign in." }, { status: 401 });
+    }
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: "GEMINI_API_KEY is missing." }, { status: 500 });
     }
 
-    const inventory = await buildInventoryContext();
+    const inventory = await buildInventoryContext(session.storeId);
     const today = new Date().toLocaleDateString("en-IN", {
       weekday: "long", day: "numeric", month: "long", year: "numeric",
     });

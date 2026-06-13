@@ -40,17 +40,20 @@ async function extractLinesFromImage(bytes, mimeType, products) {
       resolvedQty,
       confidence: item.confidence ?? score ?? null,
       status: product ? "matched" : "unmatched",
+      // The AI's original guess, for the accuracy/edit-rate metric.
+      aiProductId: product ? product.id : null,
+      aiResolvedQty: resolvedQty,
     };
   });
 
   return { lines, imagePath };
 }
 
-// Process ONE OR MORE delivery-note photos into a single PENDING delivery.
-// `images` is an array of { bytes, mimeType }.
-export async function processDeliveryImages({ images, source = "upload", vendorName = null, sourceRef = null }) {
-  // Match against local-vendor products (slips never contain rice/soap).
-  const products = await prisma.product.findMany({ where: { supply: "local_vendor" } });
+// Process ONE OR MORE delivery-note photos into a single PENDING delivery
+// for a specific store. `images` is an array of { bytes, mimeType }.
+export async function processDeliveryImages({ storeId, images, source = "upload", vendorName = null, sourceRef = null }) {
+  // Match against THIS store's local-vendor products (slips never contain rice/soap).
+  const products = await prisma.product.findMany({ where: { storeId, supply: "local_vendor" } });
 
   let allLines = [];
   let firstImagePath = null;
@@ -61,12 +64,12 @@ export async function processDeliveryImages({ images, source = "upload", vendorN
   }
 
   return prisma.delivery.create({
-    data: { vendorName, source, sourceRef, imagePath: firstImagePath, status: "pending", lines: { create: allLines } },
+    data: { storeId, vendorName, source, sourceRef, imagePath: firstImagePath, status: "pending", lines: { create: allLines } },
     include: { lines: { include: { product: true } } },
   });
 }
 
 // Single-image convenience (used by WhatsApp).
-export function processDeliveryImage({ bytes, mimeType, source = "upload", vendorName = null, sourceRef = null }) {
-  return processDeliveryImages({ images: [{ bytes, mimeType }], source, vendorName, sourceRef });
+export function processDeliveryImage({ storeId, bytes, mimeType, source = "upload", vendorName = null, sourceRef = null }) {
+  return processDeliveryImages({ storeId, images: [{ bytes, mimeType }], source, vendorName, sourceRef });
 }

@@ -1,10 +1,9 @@
-// Seed script: a realistic ~50-SKU kirana catalogue.
+// Seed: 5 kirana stores (tenants), each with its own catalogue, stock and a
+// realistic history of confirmed deliveries (so the admin metrics have data).
 //
-//  - supply: "local_vendor" = arrives daily on handwritten slips (12 SKUs).
-//  - supply: "distributor"  = bought via formal invoices/POs (38 SKUs).
-//
-// Perishable (local-vendor) items also get a shelf life and a few seeded
-// "batches" so the dashboard can show how many units expire today.
+// Logins (PROTOTYPE ONLY — plain passwords):
+//   store1..store5  / 1234     (owners)
+//   admin           / admin    (handled in src/lib/auth.js, not a DB row)
 //
 // Run with:  npm run seed
 import "dotenv/config";
@@ -12,8 +11,9 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 const DAY = 24 * 60 * 60 * 1000;
+const rand = (a, b) => a + Math.random() * (b - a);
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-// ─── 12 LOCAL-VENDOR SKUs (the handwritten-slip subset) ──────────────────────
 const localVendor = [
   { name: "Toned Milk 500ml",        brand: "Mother Dairy", category: "Dairy",  unit: "packet", unitsPerCrate: 30, stock: 18, shelfLifeDays: 2,  aliases: "toned milk,toned,tm,tonned milk,blue milk,doodh" },
   { name: "Full Cream Milk 500ml",   brand: "Amul",         category: "Dairy",  unit: "packet", unitsPerCrate: 30, stock: 10, shelfLifeDays: 2,  aliases: "full cream,fc milk,malai milk,gold milk" },
@@ -29,8 +29,6 @@ const localVendor = [
   { name: "Eggs (tray of 30)",       brand: "Local",        category: "Eggs",   unit: "tray",   unitsPerCrate: 6,  stock: 6,  shelfLifeDays: 21, aliases: "eggs,anda,egg tray,ande,egg" },
 ];
 
-// ─── 38 DISTRIBUTOR SKUs (formal inventory) ──────────────────────────────────
-// (A couple are intentionally low to show the low-stock signal works here too.)
 const distributor = [
   { name: "Basmati Rice 5kg",          brand: "India Gate",   category: "Staples",   unit: "bag",    stock: 12 },
   { name: "Sona Masoori Rice 10kg",    brand: "Daawat",       category: "Staples",   unit: "bag",    stock: 8 },
@@ -72,47 +70,87 @@ const distributor = [
   { name: "Vim Dishwash Bar 200g",     brand: "Vim",          category: "Household", unit: "bar",    stock: 30 },
 ];
 
+const stores = [
+  { name: "Sharma Kirana Store",  username: "store1", password: "1234" },
+  { name: "Gupta General Store",  username: "store2", password: "1234" },
+  { name: "Verma Provisions",     username: "store3", password: "1234" },
+  { name: "Reddy Super Bazaar",   username: "store4", password: "1234" },
+  { name: "Khan Daily Needs",     username: "store5", password: "1234" },
+];
+
+const vendors = ["Ramesh Dairy", "Local Bakery", "Anand Milk", "Sunrise Foods", "Gokul Dairy"];
+const deliveriesPerStore = [9, 7, 5, 4, 2]; // varied activity for the admin view
+
 async function main() {
-  // Fresh catalogue each run (batches cascade-delete with their product).
+  await prisma.deliveryLine.deleteMany();
+  await prisma.delivery.deleteMany();
+  await prisma.batch.deleteMany();
   await prisma.product.deleteMany();
+  await prisma.store.deleteMany();
 
-  const now = Date.now();
-  for (const p of localVendor) {
-    const prod = await prisma.product.create({ data: { ...p, supply: "local_vendor" } });
+  for (let s = 0; s < stores.length; s++) {
+    const store = await prisma.store.create({ data: stores[s] });
+    const now = Date.now();
+    const localProducts = [];
 
-    // Split current stock into batches so some units expire today (a "fair
-    // assumption": roughly one day's worth of an evenly-stocked item).
-    const S = p.shelfLifeDays;
-    const expiringToday = Math.min(prod.stock, Math.max(0, Math.round(prod.stock / S)));
-    const fresh = prod.stock - expiringToday;
-
-    if (expiringToday > 0) {
-      await prisma.batch.create({
-        data: { productId: prod.id, quantity: expiringToday, receivedAt: new Date(now - S * DAY), expiresAt: new Date(now) },
-      });
+    // Catalogue + baseline batches (stock varies a bit per store).
+    for (const p of localVendor) {
+      const stock = Math.max(1, Math.round(p.stock * rand(0.6, 1.4)));
+      const prod = await prisma.product.create({ data: { ...p, stock, supply: "local_vendor", storeId: store.id } });
+      localProducts.push(prod);
+      const S = p.shelfLifeDays;
+      const expiringToday = Math.min(stock, Math.max(0, Math.round(stock / S)));
+      const fresh = stock - expiringToday;
+      if (expiringToday > 0) await prisma.batch.create({ data: { productId: prod.id, quantity: expiringToday, receivedAt: new Date(now - S * DAY), expiresAt: new Date(now) } });
+      if (fresh > 0) await prisma.batch.create({ data: { productId: prod.id, quantity: fresh, receivedAt: new Date(now - DAY), expiresAt: new Date(now + (S - 1) * DAY) } });
     }
-    if (fresh > 0) {
-      await prisma.batch.create({
-        data: { productId: prod.id, quantity: fresh, receivedAt: new Date(now - DAY), expiresAt: new Date(now + (S - 1) * DAY) },
+    for (const p of distributor) {
+      const stock = Math.max(1, Math.round(p.stock * rand(0.6, 1.4)));
+      await prisma.product.create({ data: { ...p, unitsPerCrate: 1, stock, supply: "distributor", storeId: store.id } });
+    }
+
+    // Sample confirmed deliveries (applied to stock, so everything stays consistent).
+    for (let d = 0; d < deliveriesPerStore[s]; d++) {
+      const created = new Date(now - rand(0, 7) * DAY);
+      const lineCount = Math.floor(rand(3, 7));
+      const lines = [];
+      for (let i = 0; i < lineCount; i++) {
+        const prod = pick(localProducts);
+        const qty = Math.floor(rand(5, 60));
+        const confidence = Number(rand(0.82, 0.99).toFixed(2));
+        const edited = Math.random() < 0.13; // ~13% correction rate
+        lines.push({
+          rawText: `${prod.name} ${qty}`, rawName: prod.name, quantity: qty, rawUnit: prod.unit,
+          productId: prod.id, resolvedQty: qty, confidence, status: "confirmed",
+          aiProductId: prod.id, aiResolvedQty: edited ? Math.max(1, qty - 2) : qty, edited,
+        });
+      }
+      const delivery = await prisma.delivery.create({
+        data: {
+          storeId: store.id, vendorName: pick(vendors),
+          source: Math.random() < 0.3 ? "whatsapp" : "upload",
+          status: "confirmed", createdAt: created, confirmedAt: created,
+          lines: { create: lines },
+        },
+        include: { lines: true },
       });
+      // Apply each line to stock + a dated batch (consistent & reversible).
+      for (const line of delivery.lines) {
+        const prod = localProducts.find((p) => p.id === line.productId);
+        await prisma.product.update({ where: { id: line.productId }, data: { stock: { increment: line.resolvedQty } } });
+        if (prod?.shelfLifeDays) {
+          await prisma.batch.create({ data: { productId: line.productId, deliveryId: delivery.id, quantity: line.resolvedQty, receivedAt: created, expiresAt: new Date(created.getTime() + prod.shelfLifeDays * DAY) } });
+        }
+      }
     }
   }
 
-  for (const p of distributor) {
-    await prisma.product.create({ data: { ...p, unitsPerCrate: 1, supply: "distributor" } });
-  }
-
-  const total = await prisma.product.count();
-  const local = await prisma.product.count({ where: { supply: "local_vendor" } });
-  const batches = await prisma.batch.count();
-  console.log(`✅ Seed complete. ${total} products (${local} local-vendor, ${total - local} distributor), ${batches} batches.`);
+  const storeCount = await prisma.store.count();
+  const prodCount = await prisma.product.count();
+  const delCount = await prisma.delivery.count();
+  console.log(`✅ Seed complete. ${storeCount} stores, ${prodCount} products, ${delCount} sample deliveries.`);
 }
 
 main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

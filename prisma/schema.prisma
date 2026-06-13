@@ -11,10 +11,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// The catalogue. One row per product the store stocks.
+/// A kirana store = one tenant. Each store has its own catalogue, stock and
+/// deliveries, and one owner login. (Passwords are plain text — PROTOTYPE ONLY.)
+model Store {
+  id        Int      @id @default(autoincrement())
+  name      String
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+
+  products   Product[]
+  deliveries Delivery[]
+}
+
+/// The catalogue. One row per product a store stocks.
 model Product {
   id            Int      @id @default(autoincrement())
-  name          String   @unique
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeId       Int
+  name          String
   brand         String?  // e.g. "Amul", "Aashirvaad"
   category      String?  // e.g. "Dairy", "Bakery", "Staples"
   unit          String   @default("packet") // the base unit we count stock in
@@ -30,6 +45,8 @@ model Product {
 
   lines   DeliveryLine[]
   batches Batch[]
+
+  @@unique([storeId, name]) // names are unique within a store, not globally
 }
 
 /// A single received lot of a perishable product, with its own expiry.
@@ -51,6 +68,8 @@ model Batch {
 /// One delivery note received from a vendor (via upload or WhatsApp).
 model Delivery {
   id         Int      @id @default(autoincrement())
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeId    Int
   vendorName String?
   source     String   @default("upload") // "upload" or "whatsapp"
   sourceRef  String?  // e.g. WhatsApp sender id, so a "CONFIRM" reply finds this delivery
@@ -79,4 +98,10 @@ model DeliveryLine {
   resolvedQty Int      @default(0)        // quantity converted into the product's base unit
   confidence  Float?                      // how confident the AI was, 0 to 1
   status      String   @default("matched") // "matched", "unmatched", or "confirmed"
+
+  // For the accuracy metric: the AI's ORIGINAL guess, and whether the owner
+  // changed it on review. "edited = false" on confirm means the AI got it right.
+  aiProductId   Int?
+  aiResolvedQty Int     @default(0)
+  edited        Boolean @default(false)
 }

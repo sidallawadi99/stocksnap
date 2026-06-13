@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { processDeliveryImages } from "@/lib/processNote";
+import { getSession } from "@/lib/auth";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB per image
 
@@ -8,6 +9,11 @@ const MAX_BYTES = 10 * 1024 * 1024; // 10 MB per image
 // matches lines to the catalogue, and saves a single PENDING delivery.
 export async function POST(request) {
   try {
+    const session = await getSession();
+    if (!session || session.role !== "owner") {
+      return NextResponse.json({ error: "Please sign in as a store owner." }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const files = formData.getAll("image").filter((f) => f && typeof f !== "string");
     const vendorName = formData.get("vendorName") || null;
@@ -30,7 +36,7 @@ export async function POST(request) {
       images.push({ bytes: Buffer.from(await file.arrayBuffer()), mimeType: file.type || "image/jpeg" });
     }
 
-    const delivery = await processDeliveryImages({ images, source, vendorName });
+    const delivery = await processDeliveryImages({ storeId: session.storeId, images, source, vendorName });
     return NextResponse.json({ delivery });
   } catch (err) {
     console.error("extract error:", err);

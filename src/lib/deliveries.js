@@ -12,9 +12,15 @@ export async function applyDeliveryToStock(tx, deliveryId, reviewedLines) {
     const qty = Math.max(0, Math.round(Number(line.resolvedQty) || 0));
     const include = line.include !== false;
 
+    // Accuracy signal: did the owner change the AI's original guess?
+    const existing = await tx.deliveryLine.findUnique({ where: { id: lineId } });
+    const aiProductId = existing?.aiProductId ?? null;
+    const aiQty = existing?.aiResolvedQty ?? 0;
+    const edited = include ? productId !== aiProductId || qty !== aiQty : Boolean(aiProductId);
+
     await tx.deliveryLine.update({
       where: { id: lineId },
-      data: { productId, resolvedQty: qty, status: include && productId ? "confirmed" : "unmatched" },
+      data: { productId, resolvedQty: qty, status: include && productId ? "confirmed" : "unmatched", edited },
     });
 
     if (include && productId && qty > 0) {

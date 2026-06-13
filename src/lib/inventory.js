@@ -4,8 +4,9 @@ const DAY = 24 * 60 * 60 * 1000;
 
 // Builds a compact, live text snapshot of inventory for the AI to reason over.
 // Shared by the chat assistant and the insights endpoint.
-export async function buildInventoryContext() {
+export async function buildInventoryContext(storeId) {
   const products = await prisma.product.findMany({
+    where: { storeId },
     orderBy: [{ supply: "asc" }, { category: "asc" }, { name: "asc" }],
     include: { batches: true },
   });

@@ -48,6 +48,11 @@ export async function POST(request) {
     const to = form.get("To") || ""; // our sandbox number
     const body = (form.get("Body") || "").trim().toLowerCase();
 
+    // No login on the webhook → route WhatsApp deliveries to a default store.
+    // (Production: map the sender's number to a registered store.)
+    const store = await prisma.store.findFirst({ orderBy: { id: "asc" } });
+    if (!store) return twiml("⚠️ No store is configured yet.");
+
     // ── A photo arrived → read it and create a PENDING delivery ──
     if (numMedia > 0) {
       const mediaUrl = form.get("MediaUrl0");
@@ -70,6 +75,7 @@ export async function POST(request) {
       const bytes = Buffer.from(await mediaRes.arrayBuffer());
 
       const delivery = await processDeliveryImage({
+        storeId: store.id,
         bytes,
         mimeType: mediaType,
         source: "whatsapp",
@@ -100,7 +106,7 @@ export async function POST(request) {
 
     if (isConfirm) {
       const pending = await prisma.delivery.findFirst({
-        where: { sourceRef: from, status: "pending" },
+        where: { sourceRef: from, status: "pending", storeId: store.id },
         orderBy: { id: "desc" },
         include: { lines: true },
       });
@@ -117,7 +123,7 @@ export async function POST(request) {
 
     if (isCancel) {
       const pending = await prisma.delivery.findFirst({
-        where: { sourceRef: from, status: "pending" },
+        where: { sourceRef: from, status: "pending", storeId: store.id },
         orderBy: { id: "desc" },
       });
       if (pending) {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { reverseDelivery } from "@/lib/deliveries";
+import { getSession } from "@/lib/auth";
 
 // POST /api/deliveries/:id/reopen
 // Prepares a delivery for editing. If it was already confirmed, its stock is
@@ -10,12 +11,16 @@ export async function POST(request, { params }) {
   try {
     const { id } = await params;
     const deliveryId = Number(id);
+    const session = await getSession();
     const existing = await prisma.delivery.findUnique({
       where: { id: deliveryId },
       include: { lines: true },
     });
     if (!existing) {
       return NextResponse.json({ error: "Delivery not found." }, { status: 404 });
+    }
+    if (!session || session.role !== "owner" || existing.storeId !== session.storeId) {
+      return NextResponse.json({ error: "Not allowed." }, { status: 403 });
     }
 
     if (existing.status === "confirmed") {

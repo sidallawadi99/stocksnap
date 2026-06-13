@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
 import ChatPanel from "@/app/components/ChatPanel";
 import DeliveryModal from "@/app/components/DeliveryModal";
 import ProductTable from "@/app/components/ProductTable";
@@ -11,11 +13,17 @@ const LOW_STOCK_THRESHOLD = 6;
 const DAY = 24 * 60 * 60 * 1000;
 
 export default async function Dashboard() {
+  const session = await getSession();
+  if (!session) redirect("/login");
+  if (session.role !== "owner") redirect("/admin");
+
   const products = await prisma.product.findMany({
+    where: { storeId: session.storeId },
     orderBy: [{ category: "asc" }, { name: "asc" }],
     include: { batches: true },
   });
   const deliveries = await prisma.delivery.findMany({
+    where: { storeId: session.storeId },
     orderBy: { createdAt: "desc" },
     take: 10,
     include: { lines: true },
