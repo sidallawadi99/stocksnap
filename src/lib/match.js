@@ -71,6 +71,20 @@ export function findBestProduct(readName, products) {
 }
 
 /**
+ * Top-N closest products for a read name (for "did you mean…" suggestions).
+ * Uses a looser threshold than findBestProduct so near-misses still surface.
+ * @returns {Array<object>} products, best first.
+ */
+export function rankProducts(readName, products, n = 3) {
+  return products
+    .map((p) => ({ p, score: scoreProduct(readName, p) }))
+    .filter((s) => s.score > 0.15)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, n)
+    .map((s) => s.p);
+}
+
+/**
  * Convert an extracted quantity into the product's base unit.
  * e.g. 1 "crate" of a product with unitsPerCrate=30 -> 30.
  */

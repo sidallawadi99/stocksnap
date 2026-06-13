@@ -45,11 +45,11 @@ export default function Modal({ open, busy, dirty, onClose, children }) {
           onClick={closeViaButton}
           disabled={busy}
           title={busy ? "Please wait — updating…" : "Close"}
-          className="absolute left-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ✕
         </button>
-        <div className="p-6 pt-14">{children}</div>
+        <div className="p-6 pr-12">{children}</div>
       </div>
     </div>
   );

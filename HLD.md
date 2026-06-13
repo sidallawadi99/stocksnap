@@ -73,10 +73,11 @@ A single **Next.js** application serves both the UI and the backend API routes (
 ```
 
 ### Components
-- **UI (React/Next.js, Tailwind):** dashboard (sortable/filterable/collapsible tables), the New-Delivery modal (multi-photo upload → review → confirm), the AI assistant panel (chat + insights, with voice input), the editable delivery log.
-- **API routes (Next.js):** `extract`, `whatsapp`, `deliveries/[id]/confirm|reopen`, `deliveries/[id]` (GET/DELETE), `products`, `chat`, `insights`.
-- **Domain libraries (`src/lib`):** `gemini` (vision), `match` (catalogue matching + unit conversion), `processNote` (shared intake pipeline incl. image normalization — auto-rotate + downscale via `sharp` — handling one or more photos), `deliveries` (apply/reverse stock), `inventory` (live snapshot for AI), `prisma` (DB client).
-- **Database (SQLite via Prisma):** the source of truth for catalogue and stock.
+- **Auth & multi-tenancy:** a login page + session cookie + edge `middleware` gate every route and route by role. Each of 5 **stores** is an isolated tenant (its own catalogue/stock/deliveries); an **admin** sees per-store activity + AI-accuracy analytics and can drill into any store (read-only).
+- **UI (React/Next.js, Tailwind):** owner dashboard (sortable/filterable/collapsible tables), the New-Delivery modal (multi-photo upload → review → confirm, with match suggestions + add-as-new-product), the AI assistant panel (chat + insights, voice), the editable delivery log, and the admin pages.
+- **API routes (Next.js):** `login`/`logout`, `extract`, `whatsapp`, `deliveries/[id]/confirm|reopen`, `deliveries/[id]` (GET/DELETE), `products` (GET/POST), `chat`, `insights` — all store-scoped & ownership-checked, with rate limiting on the expensive/abusable ones.
+- **Domain libraries (`src/lib`):** `gemini` (vision), `match` (matching + unit conversion + ranked suggestions), `processNote` (shared intake pipeline incl. `sharp` normalization, one or more photos), `deliveries` (apply/reverse stock + accuracy flag), `inventory` (live snapshot for AI), `auth` (session), `rateLimit`, `prisma`.
+- **Database (SQLite via Prisma):** source of truth for stores, catalogue and stock.
 - **External services:** Google Gemini (AI), Twilio (WhatsApp bridge), cloudflared (dev tunnel to expose localhost).
 
 ---
@@ -84,28 +85,26 @@ A single **Next.js** application serves both the UI and the backend API routes (
 ## 3. Data model
 
 ```
-Product                          Delivery                       DeliveryLine
-─────────                        ──────────                     ─────────────
-id                               id                             id
-name (unique)                    vendorName                     deliveryId  ─► Delivery
-brand                            source  (upload | whatsapp)    rawText      (what AI read)
-category                         sourceRef (WhatsApp sender)    rawName, quantity, rawUnit
-unit  (packet/loaf/tray…)        imagePath                      productId    ─► Product (nullable)
-unitsPerCrate                    status  (pending|confirmed)    resolvedQty  (in base units)
-stock                            createdAt, confirmedAt         confidence
-shelfLifeDays (nullable)                                        status (matched|unmatched|confirmed)
-aliases (csv, for matching)
-supply (local_vendor|distributor)     Batch
-                                      ──────
-                                      id, productId ─► Product
-                                      deliveryId ─► Delivery (nullable)
-                                      quantity, receivedAt, expiresAt
+Store (tenant)        Product                  Delivery               DeliveryLine
+───────────           ─────────                ──────────             ─────────────
+id                    id                       id                     id
+name                  storeId ─► Store         storeId ─► Store       deliveryId ─► Delivery
+username (unique)     name (unique per store)  vendorName             rawText / rawName / quantity / rawUnit
+password              brand, category          source (upload|wa)     productId ─► Product (nullable)
+                      unit, unitsPerCrate      sourceRef (wa sender)  resolvedQty (base units), confidence
+                      stock, shelfLifeDays      imagePath              status (matched|unmatched|confirmed)
+                      aliases (csv)            status, createdAt      aiProductId, aiResolvedQty  (AI's original)
+                      supply (local|distrib.)  confirmedAt            edited (owner changed it?)  ← accuracy
+
+Batch:  id · productId ─► Product · deliveryId ─► Delivery (nullable) · quantity · receivedAt · expiresAt
 ```
 
 Key ideas:
-- **`supply`** splits the catalogue into the *daily-vendor* subset (what slips contain) and *formal* stock (rice, soap…). AI matching is scoped to `local_vendor` only — more accurate, true to the domain.
+- **`Store` + `storeId` everywhere** = multi-tenancy. Every query is scoped to the signed-in store; names are unique *per store*. Admin aggregates across stores.
+- **`supply`** splits the catalogue into the *daily-vendor* subset (what slips contain) vs *formal* stock; AI matching is scoped to `local_vendor` — more accurate, true to the domain.
 - **`unitsPerCrate`** is **per product**, because a "crate" isn't universal (milk ≈ 30 pouches, curd ≈ 12 cups).
-- **`Batch`** is a small ledger: each confirmed line creates a batch with its own `expiresAt` (= received + `shelfLifeDays`). This powers **"expiring today"** and **"added today"**, and — because each batch is tagged with `deliveryId` — makes a delivery's stock effect **reversible** (for edit/delete).
+- **`Batch`** is a ledger: each confirmed line creates a batch with its own `expiresAt` (= received + `shelfLifeDays`) and a `deliveryId`. This powers "expiring/added today" and makes a delivery's stock **reversible** on edit/delete.
+- **`aiProductId` / `aiResolvedQty` / `edited`** capture the AI's original guess vs the owner's final choice → the **correction-rate accuracy metric** shown in the admin view.
 
 ---
 
@@ -159,7 +158,13 @@ Key ideas:
 4. **Batch ledger for expiry + reversibility.**
    - *Why:* perishables expire per-batch (FEFO); tagging batches to deliveries makes stock changes auditable and undoable. *Tradeoff:* we don't track sales, so expired units aren't auto-removed (shown as a warning, not deducted).
 
-5. **Monolith, SQLite, sandbox.**
+5. **Multi-tenant from the start, simple auth for now.**
+   - *Why:* a `storeId` on every record + scoped queries means stores are truly isolated (store A cannot see store B), and an admin can aggregate. *Tradeoff:* auth is intentionally minimal (plain passwords, unsigned cookie) for the prototype — production would hash passwords + use signed/JWT sessions or OAuth. The data model wouldn't change.
+
+6. **Measure accuracy behaviourally (correction rate).**
+   - *Why:* the model's self-reported confidence can lie; the share of lines the owner *confirms unedited* is ground-truth quality. Stored per line (`edited`), aggregated in the admin view. *Tradeoff:* needs real usage to be meaningful.
+
+7. **Monolith, SQLite, sandbox.**
    - *Why:* simplest thing that fully works for a prototype. *Tradeoff:* not yet built for high concurrency / many stores — see roadmap.
 
 ---
@@ -172,16 +177,21 @@ Key ideas:
 - **Sideways phone photos** → auto-rotated from EXIF orientation before the AI reads them.
 - **Multiple photos in one delivery** → each is validated and read independently, then merged into a single review.
 - **Malformed AI JSON** (markdown fences, wrong shape) → defensive parser returns an empty list, never crashes.
+- **Item not in the catalogue** → never silently mis-matched: flagged as `unmatched`, with **ranked "did you mean…" suggestions** and an **add-as-new-product** option; or the owner skips it.
 - **Double confirm** → blocked; **delivery not found** → 404; **negative quantity** → clamped to ≥ 0.
+- **Cross-tenant access** → ownership checks return 403 if a store touches another store's delivery.
+- **Abuse / runaway cost** → per-caller rate limiting on login (brute-force), upload, chat/insights, and WhatsApp.
 - **WhatsApp media** → downloaded with Twilio Basic auth; failures reply with a retry message.
 
-Tested with `npm test` (matching + parsing, 19 cases) plus integration checks of the confirm/reverse/delete lifecycle.
+Tested with `npm test` (36 unit tests: matching, parsing, stock apply/reverse + accuracy flag, rate limiter) plus integration checks of the confirm/reverse/delete lifecycle and multi-tenant isolation.
 
 ---
 
 ## 8. Security & secrets
 
-- API keys / tokens live in `.env.local` / `.env`, which are **git-ignored** — never committed. A committed **`.env.example`** documents the required variables without exposing values.
+- **Secrets:** API keys / tokens live in `.env.local` / `.env`, which are **git-ignored** — never committed. A committed **`.env.example`** documents the required variables without exposing values.
+- **Auth & isolation:** every route is gated by middleware; API routes re-check the session and **scope all data by `storeId`**, with explicit ownership (403) checks. *Prototype caveat:* passwords are plain text and the session cookie is unsigned — production would hash (bcrypt) + sign/JWT.
+- **Abuse:** rate limiting on login and the AI endpoints (in-memory now → Redis at scale).
 - For the WhatsApp prototype, the dev tunnel and Twilio sandbox are demo-only. Production would verify Twilio's request signature, use the official Meta WhatsApp Cloud API, and store secrets in a managed secret store.
 
 ---

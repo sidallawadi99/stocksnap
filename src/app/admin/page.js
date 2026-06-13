@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
@@ -69,15 +70,15 @@ export default async function AdminDashboard() {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-t border-zinc-100">
+                <tr key={r.id} className="border-t border-zinc-100 hover:bg-zinc-50/60">
                   <td className="px-5 py-3">
-                    <div className="font-medium">{r.name}</div>
-                    <div className="text-xs text-zinc-400">{r.username}</div>
+                    <Link href={`/admin/store/${r.id}`} className="font-medium text-emerald-700 hover:underline">{r.name}</Link>
+                    <div className="text-xs text-zinc-400">{r.username} · view →</div>
                   </td>
                   <td className="px-5 py-3 text-right">{r.deliveries}</td>
                   <td className="px-5 py-3 text-right">{r.confirmed}</td>
                   <td className="px-5 py-3 text-right">{r.lines}</td>
-                  <td className="px-5 py-3 text-right">{r.itemsAdded}</td>
+                  <td className="px-5 py-3 text-right">{r.itemsAdded.toLocaleString("en-IN")}</td>
                   <td className="px-5 py-3 text-right">
                     {r.accuracy != null ? <AccuracyPill pct={r.accuracy} /> : <span className="text-zinc-300">—</span>}
                   </td>
@@ -103,7 +104,9 @@ export default async function AdminDashboard() {
 function StatCard({ label, value, accent }) {
   return (
     <div className={`rounded-xl border bg-white p-4 ${accent ? "border-emerald-200" : "border-zinc-200"}`}>
-      <div className={`text-2xl font-semibold ${accent ? "text-emerald-600" : ""}`}>{value}</div>
+      <div className={`text-2xl font-semibold ${accent ? "text-emerald-600" : ""}`}>
+        {typeof value === "number" ? value.toLocaleString("en-IN") : value}
+      </div>
       <div className="text-xs text-zinc-500">{label}</div>
     </div>
   );

@@ -2,96 +2,92 @@
 
 StockSnap lets a kirana (neighbourhood grocery) store keep its inventory in sync with the **daily ad-hoc vendors** — the milk man, the bread man — who still hand over **rough, handwritten delivery slips** ("Toned Milk – 2 crate", "Bread – 10").
 
-The owner snaps a photo of that slip (e.g. forwards it on WhatsApp). StockSnap uses AI vision to **read the note**, **match each line to the catalogue**, converts crates → packets, lets the owner **review & correct**, and on confirmation **updates the stock**.
+The owner snaps a photo of that slip (uploaded on the web, or sent on **WhatsApp**). AI reads the note, matches each line to the catalogue, converts crates → packets, the owner **reviews & confirms**, and stock updates.
 
-> Built as an assignment for Jumbotail. The goal is to close the gap between a formal inventory system and the messy, paper-based reality of daily perishable deliveries.
-
----
-
-## ✨ What it does
-
-- 📸 **Ingest delivery notes** by photo — upload **one or more** on the web, or **send one on WhatsApp** and reply `CONFIRM` right in the chat.
-- 🤖 **Read handwriting with AI** (Google Gemini vision) into structured `{ item, quantity, unit }` data — handles English/Hindi and shorthand like `pkt`, `peti`, `crate`. Photos are auto-rotated + downscaled first (sharp).
-- 🗂️ **Match to the catalogue** with an alias-aware fuzzy matcher, and **convert units** (e.g. 2 crates → 60 packets).
-- ✅ **Human-in-the-loop review** — the owner fixes any wrong match or quantity before anything is committed; confirmed deliveries are **reversible** (edit/delete undoes stock).
-- 📊 **Live dashboard** — stock, low-stock & expiry signals, an editable delivery log, and an **AI assistant** (chat + insights, with voice).
+> Built as an assignment for Jumbotail. It closes the gap between a formal inventory system and the messy, paper-based reality of daily perishable deliveries.
 
 ---
 
-## 🏗️ Architecture (high level)
+## ✨ Features
 
+- 📸 **Photo intake** — upload **one or more** notes on the web, or **send one on WhatsApp** and reply `CONFIRM` in chat.
+- 🤖 **AI reading** (Google Gemini vision) → structured `{ item, quantity, unit }`; handles **handwriting, Hindi/Hinglish, shorthand** (pkt/peti/crate); photos auto-rotated + downscaled.
+- 🗂️ **Catalogue matching** (alias-aware) with **unit conversion** (2 crates → 60 packets), **"did you mean…" suggestions**, and **add-as-new-product** for unmatched items.
+- ✅ **Human-in-the-loop** — nothing changes stock until the owner confirms; confirmed deliveries are **reversible** (edit/delete undoes stock).
+- 📊 **Dashboard** — live stock split into daily-vendor vs formal; **expiring-today**, **(+N) added-today**, and **low-stock** signals; sortable/filterable/collapsible tables; an editable delivery log.
+- 💬 **AI assistant** — chat (English/Hindi/Hinglish) + 🎤 voice, grounded in live inventory; an **Insights** tab.
+- 🔐 **Multi-tenant** — 5 store logins (isolated inventories) + an **admin** with per-store activity & **AI-accuracy** analytics, and drill-down into any store.
+- 🛡️ **Hardening** — auth + ownership checks, rate limiting, input validation, reversible stock ledger.
+
+---
+
+## 🔑 Demo logins
+
+| Role | Username | Password |
+|------|----------|----------|
+| Store owners | `store1` … `store5` | `1234` |
+| Admin | `admin` | `admin` |
+
+> Plain passwords are **prototype-only**; production would hash them + use proper sessions.
+
+---
+
+## 🚀 Run it locally
+
+### Prerequisites
+- [Node.js](https://nodejs.org/) 18+ and npm
+- A **free** Gemini API key → https://aistudio.google.com/apikey
+
+### Steps
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Set up environment variables (copy the template, then add your key)
+cp .env.example .env.local
+cp .env.example .env          # Prisma reads .env
+#   → open both files and set GEMINI_API_KEY=<your key>
+#   (Twilio keys are optional — only for the WhatsApp feature)
+
+# 3. Create the database + sample data (5 stores, catalogues, deliveries)
+npx prisma migrate dev
+npm run seed
+
+# 4. Start the app
+npm run dev
 ```
-  Handwritten note (photo)
-          │   upload  (or future: WhatsApp webhook)
-          ▼
-  ┌───────────────────────────────────────────────┐
-  │  Next.js app (UI + API routes)                 │
-  │                                                │
-  │   /api/extract                                 │
-  │     1. Gemini vision  → reads note to JSON     │
-  │     2. Matcher        → maps text → catalogue  │
-  │     3. Unit resolver  → crates → base units    │
-  │     → saves a PENDING delivery                 │
-  │                                                │
-  │   Review screen (human confirms / corrects)    │
-  │                                                │
-  │   /api/deliveries/[id]/confirm                 │
-  │     → applies quantities to stock (atomic)     │
-  └───────────────────────────────────────────────┘
-          │
-          ▼
-   SQLite database (via Prisma)
-   Product · Delivery · DeliveryLine
+Open **http://localhost:3000** and sign in with a demo login above.
+
+### Run the tests
+```bash
+npm test      # 36 unit tests (matching, parsing, stock apply/reverse, rate limiter)
 ```
 
-**Why this shape:** the AI only does the hard, fuzzy part (reading handwriting). Matching and unit conversion live in plain, testable code, and **nothing touches stock until a human confirms** — important for an inventory system of record.
+---
+
+## 📲 WhatsApp (optional)
+
+The WhatsApp flow needs a public URL for Twilio's webhook to reach your local app:
+
+1. Add your **Twilio** Account SID + Auth Token to `.env.local` (free WhatsApp sandbox at [twilio.com](https://www.twilio.com/whatsapp)).
+2. Expose localhost: `cloudflared tunnel --url http://localhost:3000` (install via `brew install cloudflared`).
+3. In the Twilio WhatsApp **sandbox settings**, set *"When a message comes in"* to `<tunnel-url>/api/whatsapp` (POST).
+4. Join the sandbox from your phone, then send a photo of a note → reply `CONFIRM`.
+
+WhatsApp deliveries are routed to `store1` in this prototype (production would map each sender to their store).
 
 ---
 
 ## 🧰 Tech stack
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Web framework | **Next.js** (App Router, JavaScript) | One project for UI + backend API routes |
-| Styling | **Tailwind CSS v4** | Fast, consistent UI |
-| Database | **SQLite** + **Prisma ORM** | Zero-setup, file-based; easy to run anywhere |
-| AI vision | **Google Gemini** (`gemini-2.5-flash`) | Strong handwriting reading; generous free tier |
-
----
-
-## 🚀 Getting started
-
-### Prerequisites
-- [Node.js](https://nodejs.org/) 18+ and npm
-- A free **Gemini API key** from [Google AI Studio](https://aistudio.google.com/apikey)
-
-### 1. Install dependencies
-```bash
-npm install
-```
-
-### 2. Set up environment variables
-Copy the template, then fill in your key:
-```bash
-cp .env.example .env.local
-cp .env.example .env        # Prisma reads .env
-```
-Add your free Gemini key to both files (`GEMINI_API_KEY=...`). Twilio keys are only
-needed for the optional WhatsApp feature. Your `.env*` files are git-ignored.
-
-### 3. Set up the database (creates tables + sample catalogue)
-```bash
-npx prisma migrate dev    # creates the SQLite database from the schema
-npm run seed              # loads 11 sample products (milk, bread, curd…)
-```
-
-### 4. Run it
-```bash
-npm run dev
-```
-Open **http://localhost:3000**.
-
-> 💡 No printer? `scripts/make_mock_note.py` generates a realistic handwritten-style test note (`public/uploads/mock_note.png`).
+| Layer | Choice |
+|-------|--------|
+| Web framework | **Next.js** (App Router, JavaScript) + **Tailwind CSS** |
+| Database | **SQLite** + **Prisma** ORM |
+| AI (vision + text) | **Google Gemini 2.5 Flash** |
+| Image handling | **sharp** (auto-rotate + downscale) |
+| WhatsApp | **Twilio** sandbox + **cloudflared** tunnel (dev) |
+| Tests | Node's built-in test runner |
 
 ---
 
@@ -99,32 +95,29 @@ Open **http://localhost:3000**.
 
 ```
 src/
+  middleware.js (root)            Auth gate + role routing
   app/
-    page.js                         Dashboard (inventory + recent deliveries)
-    upload/page.js                  Upload + review/confirm screen
+    page.js                       Owner dashboard (store-scoped)
+    login/                        Login page
+    admin/                        Admin analytics + per-store drill-down
     api/
-      extract/route.js              Photo → AI → match → pending delivery
-      deliveries/[id]/confirm/route.js   Apply confirmed lines to stock
-      products/route.js             Catalogue (for dropdowns)
+      login, logout               Session
+      extract                     Web upload → AI pipeline
+      whatsapp                    Twilio webhook (photo + CONFIRM/CANCEL)
+      deliveries/[id]/...         confirm, reopen, delete (ownership-checked)
+      products, chat, insights    catalogue (+create), AI assistant, AI insights
+    components/                   ProductTable, DeliveriesPanel, DeliveryFlow,
+                                  DeliveryModal, Modal, ChatPanel
   lib/
-    gemini.js                       Gemini vision call + JSON parsing
-    match.js                        Catalogue matching + unit conversion
-    prisma.js                       Database client
-prisma/
-  schema.prisma                     Product · Delivery · DeliveryLine
-  seed.mjs                          Sample catalogue
+    gemini, match, processNote, deliveries, inventory, auth, rateLimit, prisma
+prisma/   schema.prisma · seed.mjs · migrations/
+tests/    match · parse · deliveries · rateLimit
 ```
 
 ---
 
-## 🛣️ Roadmap
+## 🛣️ Roadmap & design
 
-- **Production WhatsApp** via the Meta WhatsApp Cloud API (interactive Confirm/Cancel buttons) instead of the Twilio sandbox + dev tunnel.
-- Postgres + object storage (S3) for uploaded photos; deploy off localhost.
-- Vendor-specific catalogues, learned aliases, and confidence-based auto-confirm for high-trust lines.
-
-> See [HLD.md](./HLD.md) for the full design, decisions, trade-offs, and scaling plan.
-
----
+See **[HLD.md](./HLD.md)** for the full high-level design — architecture, data model, decisions & trade-offs, edge cases, and the scaling path (Postgres, S3, queues, microservices, Meta WhatsApp API).
 
 _Author: Sidhant Allawadi_

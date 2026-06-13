@@ -119,7 +119,7 @@ export default function ProductTable({ title, badge, accent, rows, showCrate, sh
                 {visible.map((p) => {
                   const low = p.stock <= LOW;
                   return (
-                    <tr key={p.id} className="border-t border-zinc-100">
+                    <tr key={p.id} className="border-t border-zinc-100 hover:bg-zinc-50/60">
                       <td className="px-5 py-3 font-medium">{p.name}</td>
                       <td className="px-5 py-3 text-zinc-500">{p.brand || "—"}</td>
                       <td className="px-5 py-3 text-zinc-500">{p.category}</td>

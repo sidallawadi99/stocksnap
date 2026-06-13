@@ -67,7 +67,7 @@ export default function DeliveriesPanel({ deliveries }) {
           ) : (
             <ul className="divide-y divide-zinc-100">
               {deliveries.map((d) => (
-                <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
+                <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm hover:bg-zinc-50/60">
                   <div>
                     <span className="font-medium">{d.vendorName || "Unnamed vendor"}</span>
                     <span className="ml-2 text-zinc-500">· {d.itemCount} item(s) · via {d.source}</span>

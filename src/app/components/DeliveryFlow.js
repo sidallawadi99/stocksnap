@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { rankProducts } from "@/lib/match";
 
 const MAX_MB = 10;
 const MAX_PHOTOS = 8;
@@ -24,6 +25,42 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
   const [delivery, setDelivery] = useState(null);
   const [rows, setRows] = useState([]);
   const fileInputRef = useRef(null);
+
+  // "Add as new product" inline form state (for an unmatched line).
+  const [newProductRow, setNewProductRow] = useState(null);
+  const [npForm, setNpForm] = useState({ name: "", unit: "packet", unitsPerCrate: 1, category: "" });
+
+  function onSelectChange(row, value) {
+    if (value === "__new__") {
+      setNewProductRow(row.id);
+      setNpForm({ name: row.rawName || "", unit: row.rawUnit || "packet", unitsPerCrate: 1, category: "" });
+    } else {
+      if (newProductRow === row.id) setNewProductRow(null);
+      updateRow(row.id, { productId: value });
+    }
+  }
+
+  async function createProduct(row) {
+    if (!npForm.name.trim()) {
+      setError("Enter a product name.");
+      return;
+    }
+    try {
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(npForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not create product.");
+      setProducts((prev) => (prev.some((p) => p.id === data.product.id) ? prev : [...prev, data.product]));
+      setNewProductRow(null);
+      updateRow(row.id, { productId: String(data.product.id) });
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   const galleryUrls = photos.length ? photos.map((p) => p.url) : editImage ? [editImage] : [];
 
@@ -319,11 +356,22 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
                       </td>
                       <td className="py-3 pr-2">
                         <select
-                          value={row.productId}
-                          onChange={(e) => updateRow(row.id, { productId: e.target.value })}
-                          className={`w-full rounded-md border px-2 py-1.5 ${row.productId ? "border-zinc-300" : "border-red-300 bg-red-50"}`}
+                          value={newProductRow === row.id ? "__new__" : row.productId}
+                          onChange={(e) => onSelectChange(row, e.target.value)}
+                          className={`w-full rounded-md border px-2 py-1.5 ${row.productId || newProductRow === row.id ? "border-zinc-300" : "border-red-300 bg-red-50"}`}
                         >
                           <option value="">— No match (skip) —</option>
+                          <option value="__new__">➕ Add as new product…</option>
+                          {(() => {
+                            const sugg = rankProducts(row.rawName, products, 3);
+                            return sugg.length > 0 ? (
+                              <optgroup label="Suggestions (did you mean…)">
+                                {sugg.map((p) => (
+                                  <option key={`s-${p.id}`} value={p.id}>{p.name}</option>
+                                ))}
+                              </optgroup>
+                            ) : null;
+                          })()}
                           <optgroup label="Daily-vendor items">
                             {products.filter((p) => p.supply === "local_vendor").map((p) => (
                               <option key={p.id} value={p.id}>{p.name}</option>
@@ -335,6 +383,44 @@ export default function DeliveryFlow({ editId, onBusyChange, onDirtyChange, onCo
                             ))}
                           </optgroup>
                         </select>
+
+                        {newProductRow === row.id && (
+                          <div className="mt-2 space-y-1.5 rounded-md border border-emerald-200 bg-emerald-50 p-2">
+                            <input
+                              value={npForm.name}
+                              onChange={(e) => setNpForm({ ...npForm, name: e.target.value })}
+                              placeholder="Product name"
+                              className="w-full rounded border border-zinc-300 px-2 py-1 text-xs"
+                            />
+                            <div className="flex gap-1">
+                              <input
+                                value={npForm.unit}
+                                onChange={(e) => setNpForm({ ...npForm, unit: e.target.value })}
+                                placeholder="unit (e.g. packet)"
+                                className="w-1/2 rounded border border-zinc-300 px-2 py-1 text-xs"
+                              />
+                              <input
+                                type="number"
+                                min="1"
+                                value={npForm.unitsPerCrate}
+                                onChange={(e) => setNpForm({ ...npForm, unitsPerCrate: e.target.value })}
+                                title="units per crate"
+                                placeholder="per crate"
+                                className="w-1/2 rounded border border-zinc-300 px-2 py-1 text-xs"
+                              />
+                            </div>
+                            <input
+                              value={npForm.category}
+                              onChange={(e) => setNpForm({ ...npForm, category: e.target.value })}
+                              placeholder="category (optional)"
+                              className="w-full rounded border border-zinc-300 px-2 py-1 text-xs"
+                            />
+                            <div className="flex gap-2">
+                              <button onClick={() => createProduct(row)} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700">Create & match</button>
+                              <button onClick={() => { setNewProductRow(null); updateRow(row.id, { productId: "" }); }} className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-white">Cancel</button>
+                            </div>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 pr-2 text-right">
                         <input

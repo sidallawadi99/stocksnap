@@ -108,7 +108,9 @@ export default async function Dashboard() {
 function StatCard({ label, value, highlight }) {
   return (
     <div className={`rounded-xl border bg-white p-4 ${highlight ? "border-red-200" : "border-zinc-200"}`}>
-      <div className={`text-2xl font-semibold ${highlight ? "text-red-600" : ""}`}>{value}</div>
+      <div className={`text-2xl font-semibold ${highlight ? "text-red-600" : ""}`}>
+        {typeof value === "number" ? value.toLocaleString("en-IN") : value}
+      </div>
       <div className="text-xs text-zinc-500">{label}</div>
     </div>
   );

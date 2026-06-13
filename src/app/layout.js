@@ -16,6 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata = {
   title: "StockSnap — Kirana Inventory",
   description: "Snap a vendor's handwritten delivery note; AI updates your inventory.",
+  icons: { icon: "/jumbotail.png" },
 };
 
 export default async function RootLayout({ children }) {
