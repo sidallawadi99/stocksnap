@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { processDeliveryImage } from "@/lib/processNote";
 import { applyDeliveryToStock } from "@/lib/deliveries";
+import { rateLimit } from "@/lib/rateLimit";
 
 // Reply to WhatsApp using TwiML (Twilio turns this XML into a message back).
 function twiml(message) {
@@ -47,6 +48,10 @@ export async function POST(request) {
     const from = form.get("From") || ""; // the vendor/owner
     const to = form.get("To") || ""; // our sandbox number
     const body = (form.get("Body") || "").trim().toLowerCase();
+
+    // Rate-limit per sender so a flood of messages can't run up the AI bill.
+    const rl = rateLimit(`wa:${from}`, 30, 60_000);
+    if (!rl.ok) return twiml("⏳ You're sending a bit fast — please wait a moment and try again.");
 
     // No login on the webhook → route WhatsApp deliveries to a default store.
     // (Production: map the sender's number to a registered store.)

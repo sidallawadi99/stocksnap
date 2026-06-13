@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { buildInventoryContext } from "@/lib/inventory";
 import { getSession } from "@/lib/auth";
+import { rateLimit } from "@/lib/rateLimit";
 
 const SYSTEM = (date, inventory) => `You are "StockSnap Assistant", a friendly inventory helper for an Indian kirana (grocery) store owner.
 
@@ -25,6 +26,9 @@ export async function POST(request) {
     if (!session || session.role !== "owner") {
       return NextResponse.json({ error: "Please sign in." }, { status: 401 });
     }
+    const rl = rateLimit(`chat:${session.storeId}`, 30, 60_000);
+    if (!rl.ok) return NextResponse.json({ error: "Too many messages — please slow down." }, { status: 429 });
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: "GEMINI_API_KEY is missing." }, { status: 500 });

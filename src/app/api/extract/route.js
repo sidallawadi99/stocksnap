@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { processDeliveryImages } from "@/lib/processNote";
 import { getSession } from "@/lib/auth";
+import { rateLimit } from "@/lib/rateLimit";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB per image
 
@@ -12,6 +13,14 @@ export async function POST(request) {
     const session = await getSession();
     if (!session || session.role !== "owner") {
       return NextResponse.json({ error: "Please sign in as a store owner." }, { status: 401 });
+    }
+
+    const rl = rateLimit(`extract:${session.storeId}`, 20, 60_000);
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: "Too many uploads — please wait a moment." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfter) } }
+      );
     }
 
     const formData = await request.formData();

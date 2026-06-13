@@ -73,3 +73,20 @@ test("EDGE: non-numeric quantity becomes 0", () => {
 test("EDGE: no matched product still returns a sane number", () => {
   assert.equal(resolveQuantity(5, "crate", null), 5); // can't convert without a product
 });
+
+test("matches case-insensitively and ignores punctuation", () => {
+  assert.equal(byName("TONED MILK!!"), "Toned Milk 500ml");
+  assert.equal(byName("  curd  "), "Curd 400g");
+});
+
+test("'bread' (generic) matches the white-bread alias", () => {
+  assert.equal(byName("bread"), "White Bread 400g");
+});
+
+test("EDGE: a 1-2 char read does not spuriously match", () => {
+  assert.equal(findBestProduct("a", products).product, null);
+});
+
+test("zero quantity stays zero", () => {
+  assert.equal(resolveQuantity(0, "crate", milk), 0);
+});
