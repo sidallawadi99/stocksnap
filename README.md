@@ -118,6 +118,7 @@ tests/    match · parse · deliveries · rateLimit
 
 ## 🛣️ Roadmap & design
 
-See **[HLD.md](./HLD.md)** for the full high-level design — architecture, data model, decisions & trade-offs, edge cases, and the scaling path (Postgres, S3, queues, microservices, Meta WhatsApp API).
+- **[HLD.md](./HLD.md)** — full high-level design: architecture, data model, decisions & trade-offs, edge cases, scaling path.
+- **[VISION.md](./VISION.md)** — where it goes next: vision, roadmap (Now / Next / Later), and the Jumbotail strategy.
 
 _Author: Sidhant Allawadi_
