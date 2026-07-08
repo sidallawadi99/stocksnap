@@ -1,6 +1,5 @@
-import { writeFile } from "node:fs/promises";
-import path from "node:path";
 import sharp from "sharp";
+import { put } from "@vercel/blob";
 import { prisma } from "./prisma";
 import { extractDeliveryItems } from "./gemini";
 import { findBestProduct, resolveQuantity } from "./match";
@@ -24,8 +23,12 @@ async function extractLinesFromImage(bytes, mimeType, products) {
 
   const ext = (outMime.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "");
   const fileName = `delivery_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  await writeFile(path.join(process.cwd(), "public", "uploads", fileName), imageBytes);
-  const imagePath = `/uploads/${fileName}`;
+  // Store the photo in Vercel Blob (Vercel's filesystem is read-only in production).
+  const blob = await put(`uploads/${fileName}`, imageBytes, {
+    access: "public",
+    contentType: outMime,
+  });
+  const imagePath = blob.url;
 
   const items = await extractDeliveryItems(imageBytes.toString("base64"), outMime);
   const lines = items.map((item) => {
